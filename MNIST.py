@@ -47,6 +47,8 @@ class Encoder(nn.Module):
 
         return x_hquantize
 
+torch.manual_seed(2024)
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using {device} device.")
 
@@ -59,20 +61,19 @@ model = Centroid(DIMENSIONS, num_classes)
 model = model.to(device)
 
 with torch.no_grad():
-    for i in range(EPOCH):
-        accuracy = Accuracy("multiclass", num_classes = num_classes)
+    accuracy = Accuracy("multiclass", num_classes = num_classes)
 
-        for images, labels in tqdm(train_loader, desc = f"Epoch {i}: "):
-            images = images.to(device)
-            labels = labels.to(device)
+    for images, labels in tqdm(train_loader, desc = "Training"):
+        images = images.to(device)
+        labels = labels.to(device)
 
-            images_encode = encoder(images)
-            model.add_online(images_encode, labels, lr = LEARNING_RATE)
+        images_encode = encoder(images)
+        model.add_online(images_encode, labels, lr = LEARNING_RATE)
 
-            pred = model(images_encode)
-            accuracy.update(pred.cpu(), labels.cpu())
+        pred = model(images_encode)
+        accuracy.update(pred.cpu(), labels.cpu())
 
-        print(f"Training accuracy of {(accuracy.compute().item() * 100):.3f}%")
+    print(f"Training accuracy of {(accuracy.compute().item() * 100):.3f}%")
 
 accuracy = Accuracy("multiclass", num_classes = num_classes)
 
