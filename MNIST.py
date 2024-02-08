@@ -2,15 +2,10 @@
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
-import torchhd
-from torchhd import embeddings
-from torchhd.models import Centroid
-
+from torchhd import embeddings, functional
 from tqdm import tqdm
-
-from torchmetrics import Accuracy
-
 from load_data import load_MNIST
 
 DIMENSIONS = 10000
@@ -18,7 +13,7 @@ IMAGE_SIZE = 28
 NUM_LEVELS = 1000
 BATCH_SIZE = 1
 LEARNING_RATE = 1e-2
-EPOCH = 3
+EPOCH = 2
 
 class Encoder(nn.Module):
     def __init__(self, out_features, size, levels):
@@ -37,13 +32,13 @@ class Encoder(nn.Module):
         x = self.flatten(x)
 
         # bind the learnable weights from random hdv with encoded levels of x
-        x_bind = torchhd.bind(self.position.weight, self.value(x))
+        x_bind = functional.bind(self.position.weight, self.value(x))
 
         # creates multiset with dim x_bind and size 0
-        x_multiset = torchhd.multiset(x_bind)
+        x_multiset = functional.multiset(x_bind)
 
         # make x binary again by hard quantize
-        x_hquantize = torchhd.hard_quantize(x_multiset)
+        x_hquantize = functional.hard_quantize(x_multiset)
 
         return x_hquantize
 
@@ -51,43 +46,39 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using {device} device.")
 
 train_dataset, test_dataset, train_loader, test_loader = load_MNIST(BATCH_SIZE, device)
+num_classes = len(train_dataset.classes)
+
+flatten = nn.Flatten()
+classify = nn.Linear(DIMENSIONS, num_classes, bias = False)
+classify.to(device)
+classify.weight.data.fill_(0.0)
+
 encoder = Encoder(DIMENSIONS, IMAGE_SIZE, NUM_LEVELS)
 encoder = encoder.to(device)
 
-num_classes = len(train_dataset.classes)
-model = Centroid(DIMENSIONS, num_classes)
-model = model.to(device)
-
-with torch.no_grad():
-    for i in range(EPOCH):
-        accuracy = Accuracy("multiclass", num_classes = num_classes)
-
-        for images, labels in tqdm(train_loader, desc = f"Epoch {i}: "):
-            images = images.to(device)
-            labels = labels.to(device)
-
-            images_encode = encoder(images)
-            model.add_online(images_encode, labels, lr = LEARNING_RATE)
-
-            pred = model(images_encode)
-            accuracy.update(pred.cpu(), labels.cpu())
-
-        print(f"Training accuracy of {(accuracy.compute().item() * 100):.3f}%")
-
-accuracy = Accuracy("multiclass", num_classes = num_classes)
-
 with torch.no_grad():
 
-    # make all prototype vectors into unit vectors
-    model.normalize()
+    for images, labels in tqdm(train_loader, desc = "Training"):
+        images = images.to(device)
+        labels = labels.to(device)
+
+        images_encode = encoder(images)
+        classify.weight[labels] += images_encode
+
+    classify.weight[:] = F.normalize(classify.weight)
+
+pred_correct = 0
+total_data = 0
+
+with torch.no_grad():
 
     for images, labels in tqdm(test_loader, desc = "Testing"):
         images = images.to(device)
 
         images_encode = encoder(images)
+        outputs = classify(images_encode)
+        pred = torch.argmax(outputs, dim = -1)
+        pred_correct += (pred.cpu() == labels).sum().item()
+        total_data += labels.size(0)
 
-        # `dot = True` makes inferences efficient via normalize()
-        pred = model(images_encode, dot = True)
-        accuracy.update(pred.cpu(), labels)
-
-print(f"Testing accuracy of {(accuracy.compute().item() * 100):.3f}%")
+    print(pred_correct / total_data)
