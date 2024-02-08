@@ -17,6 +17,8 @@ DIMENSIONS = 10000
 IMAGE_SIZE = 28
 NUM_LEVELS = 1000
 BATCH_SIZE = 1
+LEARNING_RATE = 1e-2
+EPOCH = 3
 
 class Encoder(nn.Module):
     def __init__(self, out_features, size, levels):
@@ -57,12 +59,20 @@ model = Centroid(DIMENSIONS, num_classes)
 model = model.to(device)
 
 with torch.no_grad():
-    for images, labels in tqdm(train_loader, desc = "Training"):
-        images = images.to(device)
-        labels = labels.to(device)
+    for i in range(EPOCH):
+        accuracy = Accuracy("multiclass", num_classes = num_classes)
 
-        images_encode = encoder(images)
-        model.add(images_encode, labels)
+        for images, labels in tqdm(train_loader, desc = f"Epoch {i}: "):
+            images = images.to(device)
+            labels = labels.to(device)
+
+            images_encode = encoder(images)
+            model.add_online(images_encode, labels, lr = LEARNING_RATE)
+
+            pred = model(images_encode)
+            accuracy.update(pred.cpu(), labels.cpu())
+
+        print(f"Training accuracy of {(accuracy.compute().item() * 100):.3f}%")
 
 accuracy = Accuracy("multiclass", num_classes = num_classes)
 
